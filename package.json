@@ -1,0 +1,39 @@
+{
+  "name": "@easycontact/react",
+  "version": "0.1.2",
+  "description": "Drop-in contact form widget for EasyContactForm. Paste one component into any React or Next.js page.",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup && cp src/index.d.ts dist/index.d.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "contact",
+    "form",
+    "widget",
+    "react",
+    "easycontact"
+  ],
+  "license": "MIT",
+  "peerDependencies": {
+    "react": ">=17",
+    "react-dom": ">=17"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.0",
+    "typescript": "^6.0.3"
+  }
+}
