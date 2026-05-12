@@ -56,9 +56,6 @@ var STYLES = `
 
 .ecf-wrap {
   max-width: 480px;
-  /* Center the form within whatever container it lands in, and keep a small
-     horizontal gutter so it never hugs the edge on narrow viewports. */
-  margin-inline: auto;
   padding-inline: 16px;
   width: 100%;
   font-size: 15px;
@@ -67,6 +64,14 @@ var STYLES = `
   background: var(--ecf-bg);
 }
 .ecf-wrap * { box-sizing: border-box; }
+
+/* Alignment \u2014 center by default; left/right honour the optional
+   --ecf-offset-x custom property (a CSS length, set from the offsetX
+   prop). The form keeps its max-width: 480px cap, so alignment only
+   matters when the surrounding container is wider than the form. */
+.ecf-wrap[data-align="center"] { margin-inline: auto; }
+.ecf-wrap[data-align="left"]   { margin-inline-start: var(--ecf-offset-x, 0); margin-inline-end: auto; }
+.ecf-wrap[data-align="right"]  { margin-inline-start: auto; margin-inline-end: var(--ecf-offset-x, 0); }
 
 .ecf-wrap[data-theme="dark"],
 .ecf-page[data-theme="dark"] {
@@ -123,10 +128,18 @@ var STYLES = `
 @media (min-width: 768px) { .ecf-page { padding: 80px 24px; } }
 
 .ecf-page .ecf-wrap {
-  /* Already centered by margin-inline: auto, but reset the gutter since
-     .ecf-page already provides the horizontal padding. */
+  /* .ecf-page already provides the horizontal padding. */
   padding-inline: 0;
 }
+
+/* Alignment inside the page layout: the section is a flex column, so
+   align-items controls horizontal placement of the heading block and the
+   form. Heading text alignment follows. The --ecf-offset-x set on
+   .ecf-page cascades down to .ecf-wrap and .ecf-page-heading. */
+.ecf-page[data-align="left"]  { align-items: flex-start; }
+.ecf-page[data-align="right"] { align-items: flex-end; }
+.ecf-page[data-align="left"]  .ecf-page-heading { text-align: left;  margin-inline-start: var(--ecf-offset-x, 0); margin-inline-end: auto; }
+.ecf-page[data-align="right"] .ecf-page-heading { text-align: right; margin-inline-start: auto; margin-inline-end: var(--ecf-offset-x, 0); }
 
 .ecf-page-heading {
   text-align: center;
@@ -191,6 +204,10 @@ var STYLES = `
   cursor: pointer;
 }
 .ecf-wrap .ecf-button:disabled { opacity: 0.7; cursor: not-allowed; }
+/* Full-width on mobile for thumb-reach; auto width above the sm breakpoint. */
+@media (max-width: 640px) {
+  .ecf-wrap .ecf-button { width: 100%; }
+}
 .ecf-wrap .ecf-error {
   background: var(--ecf-error-bg);
   border: 1px solid var(--ecf-error-border);
@@ -239,6 +256,20 @@ function normalizeTheme(value) {
 function normalizeLayout(value) {
   return value === "page" ? "page" : "inline";
 }
+function normalizeAlign(value) {
+  return value === "left" || value === "right" ? value : "center";
+}
+function formatOffsetX(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value !== 0 ? `${value}px` : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed === "" || trimmed === "0" ? null : trimmed;
+  }
+  return null;
+}
 function ContactForm({
   projectId,
   apiBase = API_BASE,
@@ -246,6 +277,8 @@ function ContactForm({
   style,
   theme = "auto",
   layout = "inline",
+  align = "center",
+  offsetX,
   heading,
   description,
   onSuccess,
@@ -263,8 +296,11 @@ function ContactForm({
   }, []);
   const dataTheme = normalizeTheme(theme);
   const dataLayout = normalizeLayout(layout);
+  const dataAlign = normalizeAlign(align);
+  const offsetCss = dataAlign === "center" ? null : formatOffsetX(offsetX);
+  const offsetStyle = offsetCss ? { "--ecf-offset-x": offsetCss } : null;
   if (!projectId) {
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "ecf-wrap", "data-theme": dataTheme, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "ecf-fatal", children: [
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "ecf-wrap", "data-theme": dataTheme, "data-align": dataAlign, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "ecf-fatal", children: [
       "EasyContactForm: missing ",
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { children: "projectId" }),
       " prop."
@@ -323,12 +359,14 @@ function ContactForm({
     }
   }
   const wrapClass = ["ecf-wrap", className].filter(Boolean).join(" ");
-  const formNode = done ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: wrapClass, "data-theme": dataTheme, style, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "ecf-success", children: "\u2713 Thanks! Your message has been sent." }) }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+  const wrapStyle = dataLayout === "page" ? style : { ...offsetStyle || null, ...style || null };
+  const formNode = done ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: wrapClass, "data-theme": dataTheme, "data-align": dataAlign, style: wrapStyle, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "ecf-success", children: "\u2713 Thanks! Your message has been sent." }) }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
     "form",
     {
       className: wrapClass,
       "data-theme": dataTheme,
-      style,
+      "data-align": dataAlign,
+      style: wrapStyle,
       onSubmit: handleSubmit,
       noValidate: true,
       children: [
@@ -394,13 +432,22 @@ function ContactForm({
     }
   );
   if (dataLayout === "page") {
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "ecf-page", "data-theme": dataTheme, children: [
-      (heading || description) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { className: "ecf-page-heading", children: [
-        heading && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h1", { className: "ecf-page-title", children: heading }),
-        description && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "ecf-page-description", children: description })
-      ] }),
-      formNode
-    ] });
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+      "section",
+      {
+        className: "ecf-page",
+        "data-theme": dataTheme,
+        "data-align": dataAlign,
+        style: offsetStyle || void 0,
+        children: [
+          (heading || description) && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { className: "ecf-page-heading", children: [
+            heading && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h1", { className: "ecf-page-title", children: heading }),
+            description && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "ecf-page-description", children: description })
+          ] }),
+          formNode
+        ]
+      }
+    );
   }
   return formNode;
 }

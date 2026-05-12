@@ -21,9 +21,9 @@
 // ──────────────────────────────────────────────────────────────────────────
 //  Layout
 // ──────────────────────────────────────────────────────────────────────────
-// The wrapper is always horizontally centered (`margin-inline: auto`) and has
-// a small horizontal gutter, so dropping `<ContactForm />` into any page
-// produces a sensibly-laid-out form without extra wrapper markup.
+// By default the wrapper is horizontally centered with a small horizontal
+// gutter, so dropping `<ContactForm />` into any page produces a sensibly-
+// laid-out form without extra wrapper markup.
 //
 // For pages where the form is the entire route (a dedicated "Contact" page),
 // pass `layout="page"` plus optional `heading` / `description` props:
@@ -36,8 +36,29 @@
 //   />
 //
 // That wraps the form in a `.ecf-page` section that fills the available
-// vertical space (no awkward gap above the footer) and renders a centered
-// heading block above the form.
+// vertical space (no awkward gap above the footer) and renders the heading
+// block above the form.
+//
+// ──────────────────────────────────────────────────────────────────────────
+//  Alignment
+// ──────────────────────────────────────────────────────────────────────────
+// Position the form within its container with the `align` and `offsetX`
+// props. `align` accepts `"left" | "center" | "right"` (default `"center"`),
+// and `offsetX` accepts a number (treated as pixels) or any CSS length
+// (`"2rem"`, `"5%"`, `"clamp(0px,4vw,48px)"`, …). The offset is applied to
+// the leading edge for `align="left"` and the trailing edge for
+// `align="right"`; it is a no-op when `align="center"`.
+//
+//   <ContactForm projectId="…" align="left" />                  // flush left
+//   <ContactForm projectId="…" align="right" />                 // flush right
+//   <ContactForm projectId="…" align="left"  offsetX={32} />    // 32px from left
+//   <ContactForm projectId="…" align="right" offsetX="2rem" />  // 2rem from right
+//   <ContactForm projectId="…" offsetX="5%" />                  // centered (offset ignored)
+//
+// The form keeps its `max-width: 480px` cap, so left/right alignment only
+// reveals itself when the surrounding container is wider than the form.
+// On narrow viewports the form already fills the available width and stays
+// where it is — there is no separate mobile-alignment knob to tune.
 //
 // To target the form from your own CSS for fine-tuning, use the
 // `.ecf-wrap` class (e.g. `.ecf-wrap[data-theme="dark"] .ecf-button { … }`).
@@ -81,9 +102,6 @@ const STYLES = `
 
 .ecf-wrap {
   max-width: 480px;
-  /* Center the form within whatever container it lands in, and keep a small
-     horizontal gutter so it never hugs the edge on narrow viewports. */
-  margin-inline: auto;
   padding-inline: 16px;
   width: 100%;
   font-size: 15px;
@@ -92,6 +110,14 @@ const STYLES = `
   background: var(--ecf-bg);
 }
 .ecf-wrap * { box-sizing: border-box; }
+
+/* Alignment — center by default; left/right honour the optional
+   --ecf-offset-x custom property (a CSS length, set from the offsetX
+   prop). The form keeps its max-width: 480px cap, so alignment only
+   matters when the surrounding container is wider than the form. */
+.ecf-wrap[data-align="center"] { margin-inline: auto; }
+.ecf-wrap[data-align="left"]   { margin-inline-start: var(--ecf-offset-x, 0); margin-inline-end: auto; }
+.ecf-wrap[data-align="right"]  { margin-inline-start: auto; margin-inline-end: var(--ecf-offset-x, 0); }
 
 .ecf-wrap[data-theme="dark"],
 .ecf-page[data-theme="dark"] {
@@ -148,10 +174,18 @@ const STYLES = `
 @media (min-width: 768px) { .ecf-page { padding: 80px 24px; } }
 
 .ecf-page .ecf-wrap {
-  /* Already centered by margin-inline: auto, but reset the gutter since
-     .ecf-page already provides the horizontal padding. */
+  /* .ecf-page already provides the horizontal padding. */
   padding-inline: 0;
 }
+
+/* Alignment inside the page layout: the section is a flex column, so
+   align-items controls horizontal placement of the heading block and the
+   form. Heading text alignment follows. The --ecf-offset-x set on
+   .ecf-page cascades down to .ecf-wrap and .ecf-page-heading. */
+.ecf-page[data-align="left"]  { align-items: flex-start; }
+.ecf-page[data-align="right"] { align-items: flex-end; }
+.ecf-page[data-align="left"]  .ecf-page-heading { text-align: left;  margin-inline-start: var(--ecf-offset-x, 0); margin-inline-end: auto; }
+.ecf-page[data-align="right"] .ecf-page-heading { text-align: right; margin-inline-start: auto; margin-inline-end: var(--ecf-offset-x, 0); }
 
 .ecf-page-heading {
   text-align: center;
@@ -216,6 +250,10 @@ const STYLES = `
   cursor: pointer;
 }
 .ecf-wrap .ecf-button:disabled { opacity: 0.7; cursor: not-allowed; }
+/* Full-width on mobile for thumb-reach; auto width above the sm breakpoint. */
+@media (max-width: 640px) {
+  .ecf-wrap .ecf-button { width: 100%; }
+}
 .ecf-wrap .ecf-error {
   background: var(--ecf-error-bg);
   border: 1px solid var(--ecf-error-border);
@@ -268,6 +306,25 @@ function normalizeLayout(value) {
   return value === 'page' ? 'page' : 'inline';
 }
 
+function normalizeAlign(value) {
+  return value === 'left' || value === 'right' ? value : 'center';
+}
+
+// Returns a CSS length string for the `offsetX` prop, or null when there
+// is nothing to apply. Numbers are treated as pixels; strings pass through
+// so callers can use any CSS length (`"2rem"`, `"5%"`, `clamp(...)`, …).
+function formatOffsetX(value) {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value !== 0 ? `${value}px` : null;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed === '' || trimmed === '0' ? null : trimmed;
+  }
+  return null;
+}
+
 export function ContactForm({
   projectId,
   apiBase = API_BASE,
@@ -275,6 +332,8 @@ export function ContactForm({
   style,
   theme = 'auto',
   layout = 'inline',
+  align = 'center',
+  offsetX,
   heading,
   description,
   onSuccess,
@@ -292,10 +351,13 @@ export function ContactForm({
 
   const dataTheme = normalizeTheme(theme);
   const dataLayout = normalizeLayout(layout);
+  const dataAlign = normalizeAlign(align);
+  const offsetCss = dataAlign === 'center' ? null : formatOffsetX(offsetX);
+  const offsetStyle = offsetCss ? { '--ecf-offset-x': offsetCss } : null;
 
   if (!projectId) {
     return (
-      <div className="ecf-wrap" data-theme={dataTheme}>
+      <div className="ecf-wrap" data-theme={dataTheme} data-align={dataAlign}>
         <div className="ecf-fatal">
           EasyContactForm: missing <code>projectId</code> prop.
         </div>
@@ -344,16 +406,22 @@ export function ContactForm({
   }
 
   const wrapClass = ['ecf-wrap', className].filter(Boolean).join(' ');
+  // When the form sits inside .ecf-page the CSS variable is set on the
+  // section instead, so the wrap doesn't need its own copy.
+  const wrapStyle = dataLayout === 'page'
+    ? style
+    : { ...(offsetStyle || null), ...(style || null) };
 
   const formNode = done ? (
-    <div className={wrapClass} data-theme={dataTheme} style={style}>
+    <div className={wrapClass} data-theme={dataTheme} data-align={dataAlign} style={wrapStyle}>
       <div className="ecf-success">✓ Thanks! Your message has been sent.</div>
     </div>
   ) : (
     <form
       className={wrapClass}
       data-theme={dataTheme}
-      style={style}
+      data-align={dataAlign}
+      style={wrapStyle}
       onSubmit={handleSubmit}
       noValidate
     >
@@ -418,7 +486,12 @@ export function ContactForm({
 
   if (dataLayout === 'page') {
     return (
-      <section className="ecf-page" data-theme={dataTheme}>
+      <section
+        className="ecf-page"
+        data-theme={dataTheme}
+        data-align={dataAlign}
+        style={offsetStyle || undefined}
+      >
         {(heading || description) && (
           <header className="ecf-page-heading">
             {heading && <h1 className="ecf-page-title">{heading}</h1>}

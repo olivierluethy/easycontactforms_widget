@@ -46,6 +46,28 @@ export interface ContactFormProps {
   layout?: 'inline' | 'page';
 
   /**
+   * Horizontal alignment of the form within its container.
+   *
+   * - `'center'` (default): the form is centered (`margin-inline: auto`).
+   * - `'left'` / `'right'`: pin the form to the leading/trailing edge of
+   *   its container. Useful when you want the form flush with a navbar
+   *   or sidebar instead of floating in the middle of a wide section.
+   *
+   * The form keeps its `max-width: 480px` cap, so alignment is only
+   * visible when the surrounding container is wider than the form.
+   */
+  align?: 'left' | 'center' | 'right';
+
+  /**
+   * Distance from the leading edge (for `align="left"`) or trailing edge
+   * (for `align="right"`) of the form's container. A `number` is treated
+   * as pixels; pass any CSS length string (`'2rem'`, `'5%'`,
+   * `'clamp(0px,4vw,48px)'`) for finer control. Ignored when
+   * `align="center"`.
+   */
+  offsetX?: number | string;
+
+  /**
    * Optional heading rendered above the form. Only displayed in
    * `layout="page"` mode.
    */
