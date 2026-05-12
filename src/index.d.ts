@@ -21,6 +21,43 @@ export interface ContactFormProps {
   style?: React.CSSProperties;
 
   /**
+   * Color palette for the form.
+   *
+   * - `'auto'` (default): follows the visitor's `prefers-color-scheme`.
+   * - `'light'`: always render the light palette.
+   * - `'dark'`: always render the dark palette.
+   *
+   * The chosen value is exposed as `data-theme="…"` on the form's wrapper,
+   * so your own CSS can fine-tune either mode via selectors like
+   * `.ecf-wrap[data-theme="dark"] .ecf-button`.
+   */
+  theme?: 'auto' | 'light' | 'dark';
+
+  /**
+   * How the form is positioned in the page.
+   *
+   * - `'inline'` (default): render just the form, horizontally centered with
+   *   a max-width of 480px. Use this when the form is one piece of a larger
+   *   page.
+   * - `'page'`: wrap the form in a full-height centered section so it fills
+   *   the available vertical space — no awkward gap between the form and a
+   *   footer. Use this for a dedicated contact route.
+   */
+  layout?: 'inline' | 'page';
+
+  /**
+   * Optional heading rendered above the form. Only displayed in
+   * `layout="page"` mode.
+   */
+  heading?: string;
+
+  /**
+   * Optional supporting line rendered below the heading. Only displayed in
+   * `layout="page"` mode.
+   */
+  description?: string;
+
+  /**
    * Called after a successful submission with the server's response payload.
    * Use this to fire analytics, run a redirect, or show your own confirmation
    * UI alongside the built-in success state.

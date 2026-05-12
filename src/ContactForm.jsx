@@ -1,10 +1,52 @@
 // EasyContactForm React widget. Drop into any React/Next.js page with:
 //   <ContactForm projectId="<your-token>" />
+//
 // Renders a 3-field form (Full Name, Email, Message) with a honeypot,
-// client-side validation, loading state, inline errors, and success replacement.
-// Pure inline styles — no external CSS dependencies.
+// client-side validation, loading state, inline errors, and a success state.
+//
+// ──────────────────────────────────────────────────────────────────────────
+//  Theming
+// ──────────────────────────────────────────────────────────────────────────
+// The form supports three modes via the `theme` prop:
+//
+//   <ContactForm projectId="…" theme="auto"  />   // default — follows OS
+//   <ContactForm projectId="…" theme="light" />   // forced light
+//   <ContactForm projectId="…" theme="dark"  />   // forced dark
+//
+// The value is applied as `data-theme="…"` on the form's wrapper. The
+// stylesheet (injected once per page) defines a light palette as default,
+// overrides it for `[data-theme="dark"]`, and — when `[data-theme="auto"]`
+// is set — falls back to the user's `prefers-color-scheme`.
+//
+// ──────────────────────────────────────────────────────────────────────────
+//  Layout
+// ──────────────────────────────────────────────────────────────────────────
+// The wrapper is always horizontally centered (`margin-inline: auto`) and has
+// a small horizontal gutter, so dropping `<ContactForm />` into any page
+// produces a sensibly-laid-out form without extra wrapper markup.
+//
+// For pages where the form is the entire route (a dedicated "Contact" page),
+// pass `layout="page"` plus optional `heading` / `description` props:
+//
+//   <ContactForm
+//     projectId="…"
+//     layout="page"
+//     heading="Get in touch"
+//     description="Questions, feedback, or just want to say hi?"
+//   />
+//
+// That wraps the form in a `.ecf-page` section that fills the available
+// vertical space (no awkward gap above the footer) and renders a centered
+// heading block above the form.
+//
+// To target the form from your own CSS for fine-tuning, use the
+// `.ecf-wrap` class (e.g. `.ecf-wrap[data-theme="dark"] .ecf-button { … }`).
+// Avoid relying on inline styles — they no longer exist on inner elements.
+//
+// NOTE: the same palette and layout rules are duplicated in `embed.js` (the
+// script-tag version). If you tweak them here, update embed.js too.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 // Production backend for the hosted EasyContactForm service. Consumers can
 // override with the `apiBase` prop if they self-host their own backend.
@@ -12,98 +54,229 @@ const API_BASE = 'https://api.easycontactforms.com';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const styles = {
-  wrap: {
-    maxWidth: 480,
-    fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-    color: '#1f2933',
-    fontSize: 15,
-    lineHeight: 1.5,
-  },
-  field: { marginBottom: 14 },
-  label: {
-    display: 'block',
-    marginBottom: 6,
-    fontWeight: 500,
-    fontSize: 13,
-    color: '#4b5563',
-  },
-  input: {
-    width: '100%',
-    padding: '10px 12px',
-    border: '1px solid #d1d5db',
-    borderRadius: 6,
-    font: 'inherit',
-    background: '#fff',
-    color: '#1f2933',
-    boxSizing: 'border-box',
-  },
-  textarea: {
-    width: '100%',
-    padding: '10px 12px',
-    border: '1px solid #d1d5db',
-    borderRadius: 6,
-    font: 'inherit',
-    minHeight: 120,
-    resize: 'vertical',
-    background: '#fff',
-    color: '#1f2933',
-    boxSizing: 'border-box',
-  },
-  button: {
-    padding: '10px 18px',
-    background: '#2563eb',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 6,
-    font: 'inherit',
-    fontWeight: 500,
-    cursor: 'pointer',
-  },
-  buttonBusy: {
-    opacity: 0.7,
-    cursor: 'not-allowed',
-  },
-  error: {
-    background: '#fef2f2',
-    border: '1px solid #fecaca',
-    color: '#991b1b',
-    padding: '10px 12px',
-    borderRadius: 6,
-    marginBottom: 14,
-    fontSize: 14,
-  },
-  success: {
-    background: '#f0fdf4',
-    border: '1px solid #bbf7d0',
-    color: '#166534',
-    padding: '14px 16px',
-    borderRadius: 6,
-    fontSize: 15,
-  },
-  honeypot: {
-    position: 'absolute',
-    left: '-9999px',
-    width: 1,
-    height: 1,
-    opacity: 0,
-  },
-  fatal: {
-    padding: '14px 16px',
-    background: '#fef2f2',
-    border: '1px solid #fecaca',
-    color: '#991b1b',
-    borderRadius: 6,
-    fontFamily: 'system-ui, sans-serif',
-    fontSize: 14,
-  },
-};
+const STYLE_ID = 'ecf-widget-styles';
+
+const STYLES = `
+.ecf-wrap,
+.ecf-page {
+  /* Light palette — also the fallback for "auto" when the OS is light. */
+  --ecf-bg: transparent;
+  --ecf-fg: #1f2933;
+  --ecf-muted: #4b5563;
+  --ecf-input-bg: #ffffff;
+  --ecf-input-fg: #1f2933;
+  --ecf-border: #d1d5db;
+  --ecf-primary: #2563eb;
+  --ecf-primary-fg: #ffffff;
+  --ecf-error-bg: #fef2f2;
+  --ecf-error-border: #fecaca;
+  --ecf-error-fg: #991b1b;
+  --ecf-success-bg: #f0fdf4;
+  --ecf-success-border: #bbf7d0;
+  --ecf-success-fg: #166534;
+
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  box-sizing: border-box;
+}
+
+.ecf-wrap {
+  max-width: 480px;
+  /* Center the form within whatever container it lands in, and keep a small
+     horizontal gutter so it never hugs the edge on narrow viewports. */
+  margin-inline: auto;
+  padding-inline: 16px;
+  width: 100%;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ecf-fg);
+  background: var(--ecf-bg);
+}
+.ecf-wrap * { box-sizing: border-box; }
+
+.ecf-wrap[data-theme="dark"],
+.ecf-page[data-theme="dark"] {
+  --ecf-fg: #e2e8f0;
+  --ecf-muted: #94a3b8;
+  --ecf-input-bg: #0b1322;
+  --ecf-input-fg: #e2e8f0;
+  --ecf-border: #334155;
+  --ecf-primary: #60a5fa;
+  --ecf-primary-fg: #0f172a;
+  --ecf-error-bg: #3f1d1d;
+  --ecf-error-border: #7f1d1d;
+  --ecf-error-fg: #fecaca;
+  --ecf-success-bg: #14352a;
+  --ecf-success-border: #166534;
+  --ecf-success-fg: #bbf7d0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .ecf-wrap[data-theme="auto"],
+  .ecf-page[data-theme="auto"] {
+    --ecf-fg: #e2e8f0;
+    --ecf-muted: #94a3b8;
+    --ecf-input-bg: #0b1322;
+    --ecf-input-fg: #e2e8f0;
+    --ecf-border: #334155;
+    --ecf-primary: #60a5fa;
+    --ecf-primary-fg: #0f172a;
+    --ecf-error-bg: #3f1d1d;
+    --ecf-error-border: #7f1d1d;
+    --ecf-error-fg: #fecaca;
+    --ecf-success-bg: #14352a;
+    --ecf-success-border: #166534;
+    --ecf-success-fg: #bbf7d0;
+  }
+}
+
+/* "Page" layout — fills the available vertical space so the form doesn't
+   leave a huge gap above whatever follows it (typically a footer pushed
+   down by a flex-1 main). */
+.ecf-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* clamp() keeps the section tall enough to feel like a real page on a
+     mostly-empty layout, without overflowing on short viewports. */
+  min-height: clamp(420px, calc(100vh - 12rem), 100vh);
+  width: 100%;
+  padding: 48px 16px;
+  color: var(--ecf-fg);
+}
+@media (min-width: 640px) { .ecf-page { padding: 64px 24px; } }
+@media (min-width: 768px) { .ecf-page { padding: 80px 24px; } }
+
+.ecf-page .ecf-wrap {
+  /* Already centered by margin-inline: auto, but reset the gutter since
+     .ecf-page already provides the horizontal padding. */
+  padding-inline: 0;
+}
+
+.ecf-page-heading {
+  text-align: center;
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto 32px;
+}
+@media (min-width: 640px) { .ecf-page-heading { margin-bottom: 40px; } }
+
+.ecf-page-title {
+  font-size: 1.875rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  margin: 0 0 12px 0;
+  color: var(--ecf-fg);
+}
+@media (min-width: 640px) { .ecf-page-title { font-size: 2.25rem; } }
+@media (min-width: 768px) { .ecf-page-title { font-size: 3rem; } }
+
+.ecf-page-description {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--ecf-muted);
+  margin: 0;
+}
+@media (min-width: 640px) { .ecf-page-description { font-size: 1.125rem; } }
+
+.ecf-wrap .ecf-field { margin-bottom: 14px; }
+.ecf-wrap .ecf-label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--ecf-muted);
+}
+.ecf-wrap .ecf-input,
+.ecf-wrap .ecf-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--ecf-border);
+  border-radius: 6px;
+  font: inherit;
+  background: var(--ecf-input-bg);
+  color: var(--ecf-input-fg);
+}
+.ecf-wrap .ecf-input:focus,
+.ecf-wrap .ecf-textarea:focus {
+  outline: none;
+  border-color: var(--ecf-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ecf-primary) 25%, transparent);
+}
+.ecf-wrap .ecf-textarea { min-height: 120px; resize: vertical; }
+.ecf-wrap .ecf-button {
+  padding: 10px 18px;
+  background: var(--ecf-primary);
+  color: var(--ecf-primary-fg);
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+.ecf-wrap .ecf-button:disabled { opacity: 0.7; cursor: not-allowed; }
+.ecf-wrap .ecf-error {
+  background: var(--ecf-error-bg);
+  border: 1px solid var(--ecf-error-border);
+  color: var(--ecf-error-fg);
+  padding: 10px 12px;
+  border-radius: 6px;
+  margin-bottom: 14px;
+  font-size: 14px;
+}
+.ecf-wrap .ecf-success {
+  background: var(--ecf-success-bg);
+  border: 1px solid var(--ecf-success-border);
+  color: var(--ecf-success-fg);
+  padding: 14px 16px;
+  border-radius: 6px;
+  font-size: 15px;
+}
+.ecf-wrap .ecf-hp {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.ecf-wrap .ecf-fatal {
+  padding: 14px 16px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  border-radius: 6px;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+}
+`;
+
+function injectStylesOnce() {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById(STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = STYLE_ID;
+  style.appendChild(document.createTextNode(STYLES));
+  document.head.appendChild(style);
+}
+
+function normalizeTheme(value) {
+  return value === 'light' || value === 'dark' ? value : 'auto';
+}
+
+function normalizeLayout(value) {
+  return value === 'page' ? 'page' : 'inline';
+}
 
 export function ContactForm({
   projectId,
   apiBase = API_BASE,
   className,
   style,
+  theme = 'auto',
+  layout = 'inline',
+  heading,
+  description,
   onSuccess,
   onError,
 }) {
@@ -115,10 +288,17 @@ export function ContactForm({
   const [err, setErr] = useState('');
   const [done, setDone] = useState(false);
 
+  useEffect(() => { injectStylesOnce(); }, []);
+
+  const dataTheme = normalizeTheme(theme);
+  const dataLayout = normalizeLayout(layout);
+
   if (!projectId) {
     return (
-      <div style={styles.fatal}>
-        EasyContactForm: missing <code>projectId</code> prop.
+      <div className="ecf-wrap" data-theme={dataTheme}>
+        <div className="ecf-fatal">
+          EasyContactForm: missing <code>projectId</code> prop.
+        </div>
       </div>
     );
   }
@@ -163,25 +343,27 @@ export function ContactForm({
     }
   }
 
-  const wrapStyle = { ...styles.wrap, ...(style || {}) };
+  const wrapClass = ['ecf-wrap', className].filter(Boolean).join(' ');
 
-  if (done) {
-    return (
-      <div className={className} style={wrapStyle}>
-        <div style={styles.success}>✓ Thanks! Your message has been sent.</div>
-      </div>
-    );
-  }
+  const formNode = done ? (
+    <div className={wrapClass} data-theme={dataTheme} style={style}>
+      <div className="ecf-success">✓ Thanks! Your message has been sent.</div>
+    </div>
+  ) : (
+    <form
+      className={wrapClass}
+      data-theme={dataTheme}
+      style={style}
+      onSubmit={handleSubmit}
+      noValidate
+    >
+      {err && <div className="ecf-error">{err}</div>}
 
-  return (
-    <form className={className} style={wrapStyle} onSubmit={handleSubmit} noValidate>
-      {err && <div style={styles.error}>{err}</div>}
-
-      <div style={styles.field}>
-        <label style={styles.label} htmlFor="ecf-name">Full name</label>
+      <div className="ecf-field">
+        <label className="ecf-label" htmlFor="ecf-name">Full name</label>
         <input
           id="ecf-name"
-          style={styles.input}
+          className="ecf-input"
           type="text"
           value={fullName}
           onChange={(e) => setFullName(e.target.value)}
@@ -190,11 +372,11 @@ export function ContactForm({
         />
       </div>
 
-      <div style={styles.field}>
-        <label style={styles.label} htmlFor="ecf-email">Email</label>
+      <div className="ecf-field">
+        <label className="ecf-label" htmlFor="ecf-email">Email</label>
         <input
           id="ecf-email"
-          style={styles.input}
+          className="ecf-input"
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
@@ -203,11 +385,11 @@ export function ContactForm({
         />
       </div>
 
-      <div style={styles.field}>
-        <label style={styles.label} htmlFor="ecf-message">Message</label>
+      <div className="ecf-field">
+        <label className="ecf-label" htmlFor="ecf-message">Message</label>
         <textarea
           id="ecf-message"
-          style={styles.textarea}
+          className="ecf-textarea"
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           maxLength={5000}
@@ -215,7 +397,7 @@ export function ContactForm({
       </div>
 
       {/* Honeypot — invisible to humans, irresistible to bots. */}
-      <div style={styles.honeypot} aria-hidden="true">
+      <div className="ecf-hp" aria-hidden="true">
         <label>
           Website
           <input
@@ -228,15 +410,27 @@ export function ContactForm({
         </label>
       </div>
 
-      <button
-        type="submit"
-        style={{ ...styles.button, ...(busy ? styles.buttonBusy : null) }}
-        disabled={busy}
-      >
+      <button type="submit" className="ecf-button" disabled={busy}>
         {busy ? 'Sending…' : 'Send message'}
       </button>
     </form>
   );
+
+  if (dataLayout === 'page') {
+    return (
+      <section className="ecf-page" data-theme={dataTheme}>
+        {(heading || description) && (
+          <header className="ecf-page-heading">
+            {heading && <h1 className="ecf-page-title">{heading}</h1>}
+            {description && <p className="ecf-page-description">{description}</p>}
+          </header>
+        )}
+        {formNode}
+      </section>
+    );
+  }
+
+  return formNode;
 }
 
 export default ContactForm;

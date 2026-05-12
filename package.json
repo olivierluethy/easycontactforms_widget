@@ -1,6 +1,6 @@
 {
   "name": "@easycontact/react",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Drop-in contact form widget for EasyContactForm. Paste one component into any React or Next.js page.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
