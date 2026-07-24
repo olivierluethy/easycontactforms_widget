@@ -12,12 +12,41 @@ npm i @easycontact/react
 import { ContactForm } from '@easycontact/react';
 
 export default function ContactPage() {
-  return <ContactForm projectId="YOUR_PROJECT_TOKEN" />;
+  return <ContactForm formId="YOUR_FORM_TOKEN" />;
 }
 ```
 
 The widget posts to `https://api.easycontactforms.com/form/submit` by default
 and the submission shows up in your project's submissions table.
+
+---
+
+## Custom fields
+
+A form is not fixed at name / email / message. Configure its fields in the
+dashboard — which fields, in what order, and which are optional — and the widget
+renders exactly that. Nothing in your page changes when you edit a form; the
+widget fetches the definition at load.
+
+Supported field types: **short text**, **email**, **phone**, and **long text**.
+Each is validated on the client and again on the server.
+
+If the definition cannot be fetched — an offline moment, a blocked request —
+the widget falls back to Full name / Email / Message rather than rendering
+nothing. Those still submit successfully.
+
+## Several forms in one project
+
+Each form has its own token, so a project can serve as many as you need:
+
+```tsx
+<ContactForm formId="TOKEN_OF_YOUR_ENQUIRY_FORM" />
+<ContactForm formId="TOKEN_OF_YOUR_NEWSLETTER_FORM" />
+```
+
+`projectId` still works and posts to whichever form is the project's default.
+That is what snippets generated before custom forms existed use, and it will
+keep working — but prefer `formId` for anything new.
 
 ---
 
@@ -41,13 +70,16 @@ natural bottom of the page (no awkward gap). Pass an optional `heading` and
 The default `layout="inline"` continues to render just the form, suitable
 for embedding inside an existing page section.
 
-The vanilla `<script>` embed exposes the same controls via data attributes:
+The vanilla `<script>` embed exposes the same controls via data attributes.
+Use `data-easycontact-form` for a specific form, or `data-easycontact` for the
+project's default form:
 
 ```html
-<div data-easycontact="YOUR_PROJECT_TOKEN"
+<div data-easycontact-form="YOUR_FORM_TOKEN"
      data-easycontact-layout="page"
      data-easycontact-heading="Get in touch"
      data-easycontact-description="Questions? Send us a message."></div>
+<script src="https://api.easycontactforms.com/widget/embed.js" defer></script>
 ```
 
 ---

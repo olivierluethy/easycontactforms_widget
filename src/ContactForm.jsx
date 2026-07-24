@@ -278,6 +278,27 @@ const STYLES = `
   height: 1px;
   opacity: 0;
 }
+.ecf-wrap .ecf-optional {
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+/* Placeholder rows shown while the form definition is being fetched. */
+.ecf-wrap .ecf-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ecf-wrap .ecf-skeleton {
+  display: block;
+  height: 62px;
+  border-radius: 6px;
+  background: var(--ecf-input-bg);
+  border: 1px solid var(--ecf-border);
+  opacity: 0.6;
+}
+.ecf-wrap .ecf-skeleton-tall { height: 140px; }
+
 .ecf-wrap .ecf-fatal {
   padding: 14px 16px;
   background: #fef2f2;
@@ -296,6 +317,38 @@ function injectStylesOnce() {
   style.id = STYLE_ID;
   style.appendChild(document.createTextNode(STYLES));
   document.head.appendChild(style);
+}
+
+// The fields every form had before the builder existed. Used as the fallback
+// when the form definition cannot be fetched: a visitor facing a blank page
+// because our API had a bad minute is far worse than a visitor filling in the
+// classic three fields, which the backend still accepts.
+const FALLBACK_FIELDS = [
+  { key: 'full_name', label: 'Full name', type: 'text', required: true },
+  { key: 'email', label: 'Email', type: 'email', required: true },
+  { key: 'message', label: 'Message', type: 'textarea', required: true },
+];
+
+const FIELD_LIMITS = { text: 150, email: 190, phone: 40, textarea: 5000 };
+
+const AUTOCOMPLETE = {
+  full_name: 'name',
+  name: 'name',
+  email: 'email',
+  phone: 'tel',
+  company: 'organization',
+};
+
+/** Client-side validation, mirroring what the API enforces. */
+function validateValue(field, raw) {
+  const value = (raw || '').trim();
+
+  if (!value) return field.required ? `${field.label} is required.` : null;
+  if (field.type === 'email' && !EMAIL_RE.test(value)) return `${field.label} must be a valid email address.`;
+  if (field.type === 'phone' && !/^[0-9+()/.\s-]{3,40}$/.test(value)) {
+    return `${field.label} must be a valid phone number.`;
+  }
+  return null;
 }
 
 function normalizeTheme(value) {
@@ -326,6 +379,7 @@ function formatOffsetX(value) {
 }
 
 export function ContactForm({
+  formId,
   projectId,
   apiBase = API_BASE,
   className,
@@ -339,9 +393,9 @@ export function ContactForm({
   onSuccess,
   onError,
 }) {
-  const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
-  const [message, setMessage] = useState('');
+  // Whatever fields the customer configured, keyed by field key.
+  const [values, setValues] = useState({});
+  const [fields, setFields] = useState(null); // null = still loading
   const [website, setWebsite] = useState(''); // honeypot
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -349,17 +403,51 @@ export function ContactForm({
 
   useEffect(() => { injectStylesOnce(); }, []);
 
+  const base = apiBase.replace(/\/$/, '');
+
+  // Fetch the form definition so the widget renders the fields the customer
+  // actually asked for rather than a hardcoded three.
+  useEffect(() => {
+    if (!formId && !projectId) return undefined;
+
+    let cancelled = false;
+    const params = formId
+      ? `form_token=${encodeURIComponent(formId)}`
+      : `project_token=${encodeURIComponent(projectId)}`;
+
+    fetch(`${base}/form/config?${params}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled) return;
+        const definition = json && json.success === true ? json.data?.form?.fields : null;
+        setFields(Array.isArray(definition) && definition.length > 0 ? definition : FALLBACK_FIELDS);
+      })
+      .catch(() => {
+        if (!cancelled) setFields(FALLBACK_FIELDS);
+      });
+
+    return () => { cancelled = true; };
+  }, [base, formId, projectId]);
+
   const dataTheme = normalizeTheme(theme);
   const dataLayout = normalizeLayout(layout);
   const dataAlign = normalizeAlign(align);
   const offsetCss = dataAlign === 'center' ? null : formatOffsetX(offsetX);
   const offsetStyle = offsetCss ? { '--ecf-offset-x': offsetCss } : null;
 
-  if (!projectId) {
+  // Input ids have to be unique when two forms share a page.
+  const tokenForIds = String(formId || projectId || '').slice(0, 12);
+
+  function setValue(key, value) {
+    setValues((current) => ({ ...current, [key]: value }));
+  }
+
+  if (!formId && !projectId) {
     return (
       <div className="ecf-wrap" data-theme={dataTheme} data-align={dataAlign}>
         <div className="ecf-fatal">
-          EasyContactForm: missing <code>projectId</code> prop.
+          EasyContactForm: pass a <code>formId</code> (or a <code>projectId</code> for the project&apos;s
+          default form).
         </div>
       </div>
     );
@@ -369,20 +457,25 @@ export function ContactForm({
     e.preventDefault();
     setErr('');
 
-    if (!fullName.trim()) { setErr('Please enter your full name.'); return; }
-    if (!EMAIL_RE.test(email.trim())) { setErr('Please enter a valid email address.'); return; }
-    if (!message.trim()) { setErr('Please enter a message.'); return; }
+    for (const field of fields) {
+      const problem = validateValue(field, values[field.key]);
+      if (problem) { setErr(problem); return; }
+    }
+
+    const payload = {};
+    fields.forEach((field) => {
+      const value = (values[field.key] || '').trim();
+      if (value) payload[field.key] = value;
+    });
 
     setBusy(true);
     try {
-      const res = await fetch(`${apiBase.replace(/\/$/, '')}/form/submit`, {
+      const res = await fetch(`${base}/form/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          project_token: projectId,
-          full_name: fullName.trim(),
-          email: email.trim(),
-          message: message.trim(),
+          ...(formId ? { form_token: formId } : { project_token: projectId }),
+          fields: payload,
           website,
         }),
       });
@@ -412,7 +505,17 @@ export function ContactForm({
     ? style
     : { ...(offsetStyle || null), ...(style || null) };
 
-  const formNode = done ? (
+  const formNode = fields === null ? (
+    // The definition is still in flight. Placeholder rows rather than nothing,
+    // so the surrounding page does not jump once the fields arrive.
+    <div className={wrapClass} data-theme={dataTheme} data-align={dataAlign} style={wrapStyle}>
+      <div className="ecf-loading" aria-live="polite" aria-busy="true">
+        <span className="ecf-skeleton" />
+        <span className="ecf-skeleton" />
+        <span className="ecf-skeleton ecf-skeleton-tall" />
+      </div>
+    </div>
+  ) : done ? (
     <div className={wrapClass} data-theme={dataTheme} data-align={dataAlign} style={wrapStyle}>
       <div className="ecf-success">✓ Thanks! Your message has been sent.</div>
     </div>
@@ -427,42 +530,41 @@ export function ContactForm({
     >
       {err && <div className="ecf-error">{err}</div>}
 
-      <div className="ecf-field">
-        <label className="ecf-label" htmlFor="ecf-name">Full name</label>
-        <input
-          id="ecf-name"
-          className="ecf-input"
-          type="text"
-          value={fullName}
-          onChange={(e) => setFullName(e.target.value)}
-          maxLength={150}
-          autoComplete="name"
-        />
-      </div>
+      {fields.map((field) => {
+        const inputId = `ecf-${tokenForIds}-${field.key}`;
+        const limit = FIELD_LIMITS[field.type] || 255;
 
-      <div className="ecf-field">
-        <label className="ecf-label" htmlFor="ecf-email">Email</label>
-        <input
-          id="ecf-email"
-          className="ecf-input"
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          maxLength={190}
-          autoComplete="email"
-        />
-      </div>
+        return (
+          <div className="ecf-field" key={field.key}>
+            <label className="ecf-label" htmlFor={inputId}>
+              {field.label}
+              {!field.required && <span className="ecf-optional"> (optional)</span>}
+            </label>
 
-      <div className="ecf-field">
-        <label className="ecf-label" htmlFor="ecf-message">Message</label>
-        <textarea
-          id="ecf-message"
-          className="ecf-textarea"
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          maxLength={5000}
-        />
-      </div>
+            {field.type === 'textarea' ? (
+              <textarea
+                id={inputId}
+                className="ecf-textarea"
+                value={values[field.key] || ''}
+                onChange={(e) => setValue(field.key, e.target.value)}
+                maxLength={limit}
+                required={field.required}
+              />
+            ) : (
+              <input
+                id={inputId}
+                className="ecf-input"
+                type={field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : 'text'}
+                value={values[field.key] || ''}
+                onChange={(e) => setValue(field.key, e.target.value)}
+                maxLength={limit}
+                autoComplete={AUTOCOMPLETE[field.key] || 'on'}
+                required={field.required}
+              />
+            )}
+          </div>
+        );
+      })}
 
       {/* Honeypot — invisible to humans, irresistible to bots. */}
       <div className="ecf-hp" aria-hidden="true">

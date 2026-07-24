@@ -232,6 +232,27 @@ var STYLES = `
   height: 1px;
   opacity: 0;
 }
+.ecf-wrap .ecf-optional {
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+/* Placeholder rows shown while the form definition is being fetched. */
+.ecf-wrap .ecf-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.ecf-wrap .ecf-skeleton {
+  display: block;
+  height: 62px;
+  border-radius: 6px;
+  background: var(--ecf-input-bg);
+  border: 1px solid var(--ecf-border);
+  opacity: 0.6;
+}
+.ecf-wrap .ecf-skeleton-tall { height: 140px; }
+
 .ecf-wrap .ecf-fatal {
   padding: 14px 16px;
   background: #fef2f2;
@@ -249,6 +270,28 @@ function injectStylesOnce() {
   style.id = STYLE_ID;
   style.appendChild(document.createTextNode(STYLES));
   document.head.appendChild(style);
+}
+var FALLBACK_FIELDS = [
+  { key: "full_name", label: "Full name", type: "text", required: true },
+  { key: "email", label: "Email", type: "email", required: true },
+  { key: "message", label: "Message", type: "textarea", required: true }
+];
+var FIELD_LIMITS = { text: 150, email: 190, phone: 40, textarea: 5e3 };
+var AUTOCOMPLETE = {
+  full_name: "name",
+  name: "name",
+  email: "email",
+  phone: "tel",
+  company: "organization"
+};
+function validateValue(field, raw) {
+  const value = (raw || "").trim();
+  if (!value) return field.required ? `${field.label} is required.` : null;
+  if (field.type === "email" && !EMAIL_RE.test(value)) return `${field.label} must be a valid email address.`;
+  if (field.type === "phone" && !/^[0-9+()/.\s-]{3,40}$/.test(value)) {
+    return `${field.label} must be a valid phone number.`;
+  }
+  return null;
 }
 function normalizeTheme(value) {
   return value === "light" || value === "dark" ? value : "auto";
@@ -271,6 +314,7 @@ function formatOffsetX(value) {
   return null;
 }
 function ContactForm({
+  formId,
   projectId,
   apiBase = API_BASE,
   className,
@@ -284,9 +328,8 @@ function ContactForm({
   onSuccess,
   onError
 }) {
-  const [fullName, setFullName] = (0, import_react.useState)("");
-  const [email, setEmail] = (0, import_react.useState)("");
-  const [message, setMessage] = (0, import_react.useState)("");
+  const [values, setValues] = (0, import_react.useState)({});
+  const [fields, setFields] = (0, import_react.useState)(null);
   const [website, setWebsite] = (0, import_react.useState)("");
   const [busy, setBusy] = (0, import_react.useState)(false);
   const [err, setErr] = (0, import_react.useState)("");
@@ -294,43 +337,64 @@ function ContactForm({
   (0, import_react.useEffect)(() => {
     injectStylesOnce();
   }, []);
+  const base = apiBase.replace(/\/$/, "");
+  (0, import_react.useEffect)(() => {
+    if (!formId && !projectId) return void 0;
+    let cancelled = false;
+    const params = formId ? `form_token=${encodeURIComponent(formId)}` : `project_token=${encodeURIComponent(projectId)}`;
+    fetch(`${base}/form/config?${params}`).then((r) => r.json()).then((json) => {
+      var _a, _b;
+      if (cancelled) return;
+      const definition = json && json.success === true ? (_b = (_a = json.data) == null ? void 0 : _a.form) == null ? void 0 : _b.fields : null;
+      setFields(Array.isArray(definition) && definition.length > 0 ? definition : FALLBACK_FIELDS);
+    }).catch(() => {
+      if (!cancelled) setFields(FALLBACK_FIELDS);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [base, formId, projectId]);
   const dataTheme = normalizeTheme(theme);
   const dataLayout = normalizeLayout(layout);
   const dataAlign = normalizeAlign(align);
   const offsetCss = dataAlign === "center" ? null : formatOffsetX(offsetX);
   const offsetStyle = offsetCss ? { "--ecf-offset-x": offsetCss } : null;
-  if (!projectId) {
+  const tokenForIds = String(formId || projectId || "").slice(0, 12);
+  function setValue(key, value) {
+    setValues((current) => ({ ...current, [key]: value }));
+  }
+  if (!formId && !projectId) {
     return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "ecf-wrap", "data-theme": dataTheme, "data-align": dataAlign, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "ecf-fatal", children: [
-      "EasyContactForm: missing ",
+      "EasyContactForm: pass a ",
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { children: "formId" }),
+      " (or a ",
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { children: "projectId" }),
-      " prop."
+      " for the project's default form)."
     ] }) });
   }
   async function handleSubmit(e) {
     e.preventDefault();
     setErr("");
-    if (!fullName.trim()) {
-      setErr("Please enter your full name.");
-      return;
+    for (const field of fields) {
+      const problem = validateValue(field, values[field.key]);
+      if (problem) {
+        setErr(problem);
+        return;
+      }
     }
-    if (!EMAIL_RE.test(email.trim())) {
-      setErr("Please enter a valid email address.");
-      return;
-    }
-    if (!message.trim()) {
-      setErr("Please enter a message.");
-      return;
-    }
+    const payload = {};
+    fields.forEach((field) => {
+      const value = (values[field.key] || "").trim();
+      if (value) payload[field.key] = value;
+    });
     setBusy(true);
     try {
-      const res = await fetch(`${apiBase.replace(/\/$/, "")}/form/submit`, {
+      const res = await fetch(`${base}/form/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          project_token: projectId,
-          full_name: fullName.trim(),
-          email: email.trim(),
-          message: message.trim(),
+          ...formId ? { form_token: formId } : { project_token: projectId },
+          fields: payload,
           website
         })
       });
@@ -346,11 +410,11 @@ function ContactForm({
         }
       }
     } catch (e2) {
-      const message2 = e2.message || "Submission failed. Please try again.";
-      setErr(message2);
+      const message = e2.message || "Submission failed. Please try again.";
+      setErr(message);
       if (typeof onError === "function") {
         try {
-          onError(e2 instanceof Error ? e2 : new Error(message2));
+          onError(e2 instanceof Error ? e2 : new Error(message));
         } catch {
         }
       }
@@ -360,7 +424,15 @@ function ContactForm({
   }
   const wrapClass = ["ecf-wrap", className].filter(Boolean).join(" ");
   const wrapStyle = dataLayout === "page" ? style : { ...offsetStyle || null, ...style || null };
-  const formNode = done ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: wrapClass, "data-theme": dataTheme, "data-align": dataAlign, style: wrapStyle, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "ecf-success", children: "\u2713 Thanks! Your message has been sent." }) }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+  const formNode = fields === null ? (
+    // The definition is still in flight. Placeholder rows rather than nothing,
+    // so the surrounding page does not jump once the fields arrive.
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: wrapClass, "data-theme": dataTheme, "data-align": dataAlign, style: wrapStyle, children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "ecf-loading", "aria-live": "polite", "aria-busy": "true", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "ecf-skeleton" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "ecf-skeleton" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "ecf-skeleton ecf-skeleton-tall" })
+    ] }) })
+  ) : done ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: wrapClass, "data-theme": dataTheme, "data-align": dataAlign, style: wrapStyle, children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "ecf-success", children: "\u2713 Thanks! Your message has been sent." }) }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
     "form",
     {
       className: wrapClass,
@@ -371,49 +443,39 @@ function ContactForm({
       noValidate: true,
       children: [
         err && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "ecf-error", children: err }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "ecf-field", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { className: "ecf-label", htmlFor: "ecf-name", children: "Full name" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "input",
-            {
-              id: "ecf-name",
-              className: "ecf-input",
-              type: "text",
-              value: fullName,
-              onChange: (e) => setFullName(e.target.value),
-              maxLength: 150,
-              autoComplete: "name"
-            }
-          )
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "ecf-field", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { className: "ecf-label", htmlFor: "ecf-email", children: "Email" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "input",
-            {
-              id: "ecf-email",
-              className: "ecf-input",
-              type: "email",
-              value: email,
-              onChange: (e) => setEmail(e.target.value),
-              maxLength: 190,
-              autoComplete: "email"
-            }
-          )
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "ecf-field", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { className: "ecf-label", htmlFor: "ecf-message", children: "Message" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "textarea",
-            {
-              id: "ecf-message",
-              className: "ecf-textarea",
-              value: message,
-              onChange: (e) => setMessage(e.target.value),
-              maxLength: 5e3
-            }
-          )
-        ] }),
+        fields.map((field) => {
+          const inputId = `ecf-${tokenForIds}-${field.key}`;
+          const limit = FIELD_LIMITS[field.type] || 255;
+          return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "ecf-field", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "ecf-label", htmlFor: inputId, children: [
+              field.label,
+              !field.required && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "ecf-optional", children: " (optional)" })
+            ] }),
+            field.type === "textarea" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "textarea",
+              {
+                id: inputId,
+                className: "ecf-textarea",
+                value: values[field.key] || "",
+                onChange: (e) => setValue(field.key, e.target.value),
+                maxLength: limit,
+                required: field.required
+              }
+            ) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                id: inputId,
+                className: "ecf-input",
+                type: field.type === "email" ? "email" : field.type === "phone" ? "tel" : "text",
+                value: values[field.key] || "",
+                onChange: (e) => setValue(field.key, e.target.value),
+                maxLength: limit,
+                autoComplete: AUTOCOMPLETE[field.key] || "on",
+                required: field.required
+              }
+            )
+          ] }, field.key);
+        }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "ecf-hp", "aria-hidden": "true", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { children: [
           "Website",
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(

@@ -62,7 +62,28 @@
   var API_BASE = 'https://api.easycontactforms.com';
 
   var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  var PHONE_RE = /^[0-9+()\/.\s-]{3,40}$/;
   var STYLE_ID = 'ecf-embed-styles';
+
+  // The fields every form had before the builder existed. Used when the form
+  // definition cannot be fetched — a visitor filling in the classic three
+  // fields (which the backend still accepts) beats a visitor staring at a blank
+  // space because our API had a bad minute.
+  var FALLBACK_FIELDS = [
+    { key: 'full_name', label: 'Full name', type: 'text', required: true },
+    { key: 'email', label: 'Email', type: 'email', required: true },
+    { key: 'message', label: 'Message', type: 'textarea', required: true },
+  ];
+
+  var FIELD_LIMITS = { text: 150, email: 190, phone: 40, textarea: 5000 };
+
+  var AUTOCOMPLETE = {
+    full_name: 'name',
+    name: 'name',
+    email: 'email',
+    phone: 'tel',
+    company: 'organization',
+  };
 
   var DARK_VARS = [
     '--ecf-fg:#e2e8f0;--ecf-muted:#94a3b8;--ecf-input-bg:#0b1322;--ecf-input-fg:#e2e8f0;',
@@ -132,6 +153,10 @@
     '.ecf-wrap .ecf-error{background:var(--ecf-error-bg);border:1px solid var(--ecf-error-border);color:var(--ecf-error-fg);padding:10px 12px;border-radius:6px;margin-bottom:14px;font-size:14px}',
     '.ecf-wrap .ecf-success{background:var(--ecf-success-bg);border:1px solid var(--ecf-success-border);color:var(--ecf-success-fg);padding:14px 16px;border-radius:6px;font-size:15px}',
     '.ecf-wrap .ecf-hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}',
+    '.ecf-wrap .ecf-optional{font-weight:400;opacity:0.75}',
+    '.ecf-wrap .ecf-loading{display:flex;flex-direction:column;gap:14px}',
+    '.ecf-wrap .ecf-skeleton{display:block;height:62px;border-radius:6px;background:var(--ecf-input-bg);border:1px solid var(--ecf-border);opacity:0.6}',
+    '.ecf-wrap .ecf-skeleton-tall{height:140px}',
   ].join('');
 
   function injectStyles() {
@@ -182,38 +207,66 @@
     return s;
   }
 
+  // Build one field row and remember its input, so validation and submission
+  // can read the value back without another DOM lookup.
+  function buildField(field, idPrefix) {
+    var inputId = idPrefix + '-' + field.key;
+    var limit = FIELD_LIMITS[field.type] || 255;
+    var input;
+
+    if (field.type === 'textarea') {
+      input = el('textarea', { className: 'ecf-textarea', maxLength: limit, id: inputId });
+    } else {
+      input = el('input', {
+        className: 'ecf-input',
+        type: field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : 'text',
+        maxLength: limit,
+        autocomplete: AUTOCOMPLETE[field.key] || 'on',
+        id: inputId,
+      });
+    }
+
+    var labelChildren = [field.label];
+    if (!field.required) {
+      labelChildren.push(el('span', { className: 'ecf-optional' }, [' (optional)']));
+    }
+
+    var row = el('div', { className: 'ecf-field' }, [
+      el('label', { className: 'ecf-label', htmlFor: inputId }, labelChildren),
+      input,
+    ]);
+
+    return { row: row, input: input, field: field };
+  }
+
   // Build the `<form class="ecf-wrap">` element with all fields, validation,
   // and submission wired up. Returns the form element so callers can decide
   // where to mount it (directly into the target, or inside an .ecf-page).
-  function buildForm(projectToken, theme, align, offset, host) {
+  //
+  // `tokens` carries whichever identifier was configured; `fields` is the
+  // definition fetched from /form/config, or FALLBACK_FIELDS.
+  function buildForm(tokens, fields, theme, align, offset, host) {
     var errBox  = el('div', { className: 'ecf-error', style: 'display:none' });
+    var honeypot = el('input', { type: 'text', tabIndex: -1, autocomplete: 'off' });
+    var idPrefix = 'ecf-' + String(tokens.form || tokens.project || '').slice(0, 12);
 
-    var nameInput    = el('input',    { className: 'ecf-input', type: 'text', maxLength: 150, autocomplete: 'name', id: 'ecf-name-' + projectToken });
-    var emailInput   = el('input',    { className: 'ecf-input', type: 'email', maxLength: 190, autocomplete: 'email', id: 'ecf-email-' + projectToken });
-    var messageInput = el('textarea', { className: 'ecf-textarea', maxLength: 5000, id: 'ecf-msg-' + projectToken });
-    var honeypot     = el('input',    { type: 'text', tabIndex: -1, autocomplete: 'off' });
+    var built = [];
+    for (var i = 0; i < fields.length; i++) {
+      built.push(buildField(fields[i], idPrefix));
+    }
 
     var submitBtn = el('button', { className: 'ecf-button', type: 'submit' }, ['Send message']);
 
-    var form = el('form', { className: 'ecf-wrap', noValidate: true }, [
-      errBox,
-      el('div', { className: 'ecf-field' }, [
-        el('label', { className: 'ecf-label', htmlFor: 'ecf-name-' + projectToken }, ['Full name']),
-        nameInput,
-      ]),
-      el('div', { className: 'ecf-field' }, [
-        el('label', { className: 'ecf-label', htmlFor: 'ecf-email-' + projectToken }, ['Email']),
-        emailInput,
-      ]),
-      el('div', { className: 'ecf-field' }, [
-        el('label', { className: 'ecf-label', htmlFor: 'ecf-msg-' + projectToken }, ['Message']),
-        messageInput,
-      ]),
-      el('div', { className: 'ecf-hp', 'aria-hidden': 'true' }, [
-        el('label', null, ['Website', honeypot]),
-      ]),
-      submitBtn,
-    ]);
+    var children = [errBox];
+    for (var j = 0; j < built.length; j++) {
+      children.push(built[j].row);
+    }
+    children.push(el('div', { className: 'ecf-hp', 'aria-hidden': 'true' }, [
+      el('label', null, ['Website', honeypot]),
+    ]));
+    children.push(submitBtn);
+
+    var form = el('form', { className: 'ecf-wrap', noValidate: true }, children);
     form.setAttribute('data-theme', theme);
     form.setAttribute('data-align', align);
 
@@ -230,27 +283,36 @@
       ev.preventDefault();
       clearError();
 
-      var name = (nameInput.value || '').trim();
-      var mail = (emailInput.value || '').trim();
-      var msg  = (messageInput.value || '').trim();
+      var payload = {};
 
-      if (!name) return showError('Please enter your full name.');
-      if (!EMAIL_RE.test(mail)) return showError('Please enter a valid email address.');
-      if (!msg) return showError('Please enter a message.');
+      for (var k = 0; k < built.length; k++) {
+        var entry = built[k];
+        var value = (entry.input.value || '').trim();
+
+        if (!value) {
+          if (entry.field.required) return showError(entry.field.label + ' is required.');
+          continue;
+        }
+        if (entry.field.type === 'email' && !EMAIL_RE.test(value)) {
+          return showError(entry.field.label + ' must be a valid email address.');
+        }
+        if (entry.field.type === 'phone' && !PHONE_RE.test(value)) {
+          return showError(entry.field.label + ' must be a valid phone number.');
+        }
+        payload[entry.field.key] = value;
+      }
 
       submitBtn.disabled = true;
       submitBtn.textContent = 'Sending…';
 
+      var body = { fields: payload, website: honeypot.value };
+      if (tokens.form) body.form_token = tokens.form;
+      else body.project_token = tokens.project;
+
       fetch(API_BASE.replace(/\/$/, '') + '/form/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          project_token: projectToken,
-          full_name: name,
-          email: mail,
-          message: msg,
-          website: honeypot.value,
-        }),
+        body: JSON.stringify(body),
       })
         .then(function (r) { return r.json().catch(function () { return null; }); })
         .then(function (json) {
@@ -270,7 +332,9 @@
           if (form.parentNode) form.parentNode.replaceChild(success, form);
           host.dispatchEvent(new CustomEvent('easycontact:success', {
             bubbles: true,
-            detail: { projectToken: projectToken, data: json.data },
+            // projectToken is kept in the payload for listeners written against
+            // the pre-forms release.
+            detail: { projectToken: tokens.project, formToken: tokens.form, data: json.data },
           }));
         })
         .catch(function (e) {
@@ -280,7 +344,7 @@
           submitBtn.textContent = 'Send message';
           host.dispatchEvent(new CustomEvent('easycontact:error', {
             bubbles: true,
-            detail: { projectToken: projectToken, error: e, message: msg },
+            detail: { projectToken: tokens.project, formToken: tokens.form, error: e, message: msg },
           }));
         });
     });
@@ -295,7 +359,26 @@
     return el('header', { className: 'ecf-page-heading' }, children);
   }
 
-  function mount(target, projectToken) {
+  // Fetch a form's field definitions. Any failure resolves to the classic three
+  // fields rather than rejecting — a contact form that renders is worth more
+  // than one that is exactly right.
+  function loadFields(tokens, done) {
+    var query = tokens.form
+      ? 'form_token=' + encodeURIComponent(tokens.form)
+      : 'project_token=' + encodeURIComponent(tokens.project);
+
+    fetch(API_BASE.replace(/\/$/, '') + '/form/config?' + query)
+      .then(function (r) { return r.json(); })
+      .then(function (json) {
+        var fields = json && json.success === true && json.data && json.data.form
+          ? json.data.form.fields
+          : null;
+        done(fields && fields.length ? fields : FALLBACK_FIELDS);
+      })
+      .catch(function () { done(FALLBACK_FIELDS); });
+  }
+
+  function mount(target, tokens) {
     var theme = normalizeTheme(target.getAttribute('data-easycontact-theme'));
     var layout = normalizeLayout(target.getAttribute('data-easycontact-layout'));
     var align = normalizeAlign(target.getAttribute('data-easycontact-align'));
@@ -309,7 +392,6 @@
     // pass `offset` into buildForm so the inline style survives the
     // form→success swap on submission.
     var inlineOffset = layout === 'page' ? null : offset;
-    var form = buildForm(projectToken, theme, align, inlineOffset, target);
 
     if (layout === 'page') {
       target.classList.add('ecf-page');
@@ -320,22 +402,45 @@
       if (heading || description) {
         target.appendChild(buildHeading(heading, description));
       }
-    } else if (inlineOffset) {
-      form.style.setProperty('--ecf-offset-x', inlineOffset);
     }
-    target.appendChild(form);
+
+    // Placeholder rows while the definition is in flight, so the page does not
+    // reflow around the form once it arrives.
+    var placeholder = el('div', { className: 'ecf-wrap' }, [
+      el('div', { className: 'ecf-loading' }, [
+        el('span', { className: 'ecf-skeleton' }),
+        el('span', { className: 'ecf-skeleton' }),
+        el('span', { className: 'ecf-skeleton ecf-skeleton-tall' }),
+      ]),
+    ]);
+    placeholder.setAttribute('data-theme', theme);
+    placeholder.setAttribute('data-align', align);
+    target.appendChild(placeholder);
+
+    loadFields(tokens, function (fields) {
+      var form = buildForm(tokens, fields, theme, align, inlineOffset, target);
+      if (inlineOffset) form.style.setProperty('--ecf-offset-x', inlineOffset);
+      if (placeholder.parentNode) placeholder.parentNode.replaceChild(form, placeholder);
+      else target.appendChild(form);
+    });
   }
 
   function mountAll() {
     injectStyles();
-    var nodes = document.querySelectorAll('[data-easycontact]');
+    // `data-easycontact` names a project and posts to its default form;
+    // `data-easycontact-form` names one specific form. Both are supported —
+    // the first is what is already pasted into live sites.
+    var nodes = document.querySelectorAll('[data-easycontact], [data-easycontact-form]');
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i];
       if (node.dataset.ecfMounted === '1') continue;
-      var token = node.getAttribute('data-easycontact');
-      if (!token) continue;
+
+      var formToken = node.getAttribute('data-easycontact-form');
+      var projectToken = node.getAttribute('data-easycontact');
+      if (!formToken && !projectToken) continue;
+
       node.dataset.ecfMounted = '1';
-      mount(node, token);
+      mount(node, { form: formToken || null, project: projectToken || null });
     }
   }
 

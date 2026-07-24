@@ -2,10 +2,24 @@ import * as React from 'react';
 
 export interface ContactFormProps {
   /**
-   * The project token from your EasyContactForm dashboard. Required.
-   * Looks like `8570afb8223dd211693581bc`.
+   * The form token from your EasyContactForm dashboard. Looks like
+   * `8570afb8223dd211693581bc`.
+   *
+   * The widget fetches this form's field definition and renders exactly the
+   * fields you configured, in the order you configured them.
+   *
+   * Pass either `formId` or `projectId`.
    */
-  projectId: string;
+  formId?: string;
+
+  /**
+   * The project token from your EasyContactForm dashboard.
+   *
+   * Submits to whichever form is the project's default. This is what snippets
+   * generated before custom forms existed use, and it keeps working — but
+   * prefer `formId` for new work, since a project can now hold several forms.
+   */
+  projectId?: string;
 
   /**
    * Override the default backend URL. Defaults to the hosted EasyContactForm API
@@ -96,9 +110,12 @@ export interface ContactFormProps {
 }
 
 /**
- * Drop-in contact form for EasyContactForm. Renders three fields (Full Name,
- * Email, Message), validates client-side, posts to the EasyContactForm API,
- * and swaps to a success state on submission.
+ * Drop-in contact form for EasyContactForm.
+ *
+ * Fetches the form's field definition from the API and renders those fields,
+ * validating each one according to its type before posting. If the definition
+ * cannot be reached it falls back to Full name / Email / Message, so a network
+ * problem degrades the form rather than blanking it.
  */
 export const ContactForm: React.FC<ContactFormProps>;
 
